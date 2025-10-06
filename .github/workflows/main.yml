@@ -1,97 +1,45 @@
-name: YouTube Downloader (No Cookies)
+name: Basic YouTube Downloader
 
 on:
   workflow_dispatch:
     inputs:
       youtube_url:
-        description: 'YouTube URL to download'
+        description: 'YouTube URL (public videos work best)'
         required: true
         type: string
-      format:
-        description: 'Download format'
-        required: false
-        type: choice
-        default: 'mp4'
-        options:
-          - mp4
-          - mp3
-          - best
 
 jobs:
   download:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout repository
+    - name: Checkout
       uses: actions/checkout@v4
       
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-        
-    - name: Install yt-dlp with specific version
+    - name: Setup environment
       run: |
-        python -m pip install --upgrade pip
-        pip install yt-dlp==2023.11.16  # Use a stable version
+        sudo apt update
+        sudo apt install -y ffmpeg python3-pip
+        pip3 install --upgrade yt-dlp
         
-    - name: Download YouTube video with retry and different options
+    - name: Download with minimal options
       run: |
         mkdir -p downloads
-        
-        URL="${{ github.event.inputs.youtube_url }}"
-        FORMAT="${{ github.event.inputs.format }}"
-        
-        # Try different approaches
-        if [ "$FORMAT" == "mp3" ]; then
-          yt-dlp \
-            --extract-flat \
-            --ignore-errors \
-            --no-warnings \
-            -x --audio-format mp3 \
-            -o "downloads/%(title)s.%(ext)s" \
-            "$URL" || \
-          yt-dlp \
-            --ignore-errors \
-            -x --audio-format mp3 \
-            -o "downloads/%(title)s.%(ext)s" \
-            "$URL"
-        elif [ "$FORMAT" == "mp4" ]; then
-          yt-dlp \
-            --extract-flat \
-            --ignore-errors \
-            --no-warnings \
-            -f "best[height<=720]" \
-            -o "downloads/%(title)s.%(ext)s" \
-            "$URL" || \
-          yt-dlp \
-            --ignore-errors \
-            -f "best[height<=720]" \
-            -o "downloads/%(title)s.%(ext)s" \
-            "$URL"
-        else
-          yt-dlp \
-            --extract-flat \
-            --ignore-errors \
-            --no-warnings \
-            -f "best" \
-            -o "downloads/%(title)s.%(ext)s" \
-            "$URL" || \
-          yt-dlp \
-            --ignore-errors \
-            -f "best" \
-            -o "downloads/%(title)s.%(ext)s" \
-            "$URL"
-        fi
-        
-    - name: List downloaded files
-      run: ls -la downloads/
-      continue-on-error: true
-      
-    - name: Upload downloaded files
+        yt-dlp \
+          --ignore-errors \
+          --no-warnings \
+          --no-check-certificate \
+          --format "worst[height>=240]" \  # Try lower quality first
+          --output "downloads/%(title).100s.%(ext)s" \
+          "${{ github.event.inputs.youtube_url }}" || \
+        yt-dlp \
+          --ignore-errors \
+          --format "best[height<=360]" \
+          --output "downloads/%(title).100s.%(ext)s" \
+          "${{ github.event.inputs.youtube_url }}"
+          
+    - name: Upload result
       uses: actions/upload-artifact@v4
       with:
-        name: youtube-downloads
+        name: download
         path: downloads/
-        retention-days: 7
-      continue-on-error: true
