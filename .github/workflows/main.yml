@@ -1,4 +1,4 @@
-name: YouTube Downloader Alternative
+name: YouTube Downloader - Fixed Paths
 
 on:
   workflow_dispatch:
@@ -7,59 +7,108 @@ on:
         description: 'YouTube URL to download'
         required: true
         type: string
+      format:
+        description: 'Download format'
+        required: false
+        type: choice
+        default: 'mp4'
+        options:
+          - mp4
+          - mp3
+          - best
 
 jobs:
   download:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Install alternative tools
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install dependencies
       run: |
         sudo apt update
-        sudo apt install -y ffmpeg python3-pip wget
-        pip3 install gallery-dl yt-dlp
+        sudo apt install -y ffmpeg
+        python -m pip install --upgrade pip
+        pip install yt-dlp
         
-    - name: Try multiple download methods
-      continue-on-error: true
+    - name: Create working directory
       run: |
-        mkdir -p downloads
-        URL="${{ github.event.inputs.youtube_url }}"
+        pwd
+        ls -la
+        mkdir -p youtube_downloads
+        echo "Working directory created"
         
-        # Method 1: gallery-dl (sometimes works when yt-dlp fails)
-        echo "🔄 Trying gallery-dl..."
-        gallery-dl --verbose -D downloads "$URL" || echo "Gallery-dl failed"
-        
-        # Method 2: yt-dlp with different options
-        echo "🔄 Trying yt-dlp with embedded options..."
-        yt-dlp \
-          --ignore-errors \
-          --no-check-certificate \
-          --compat-options no-youtube-unavailable-video \
-          -f "best[height<=480]" \
-          -o "downloads/%(title)s.%(ext)s" \
-          "$URL" || echo "yt-dlp method failed"
-          
-        # Method 3: Use specific user agent
-        echo "🔄 Trying with custom user agent..."
-        yt-dlp \
-          --ignore-errors \
-          --user-agent "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36" \
-          -f "worst" \  # Sometimes lower quality works better
-          -o "downloads/%(title)s.%(ext)s" \
-          "$URL" || echo "Custom user agent method failed"
-        
-    - name: List results
+    - name: Create cookies file
+      env:
+        YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
       run: |
-        echo "📁 Download results:"
-        find downloads -type f -name "*" 2>/dev/null || echo "No files downloaded"
+        if [ -n "$YOUTUBE_COOKIES" ]; then
+          echo "$YOUTUBE_COOKIES" > youtube_downloads/cookies.txt
+          echo "✅ Cookies file created"
+        else
+          echo "⚠️ No cookies provided"
+        fi
         
-    - name: Upload any successful downloads
+    - name: Download YouTube content
+      env:
+        URL: ${{ github.event.inputs.youtube_url }}
+        FORMAT: ${{ github.event.inputs.format }}
+      run: |
+        cd youtube_downloads
+        
+        # Set format arguments
+        if [ "$FORMAT" == "mp3" ]; then
+          FORMAT_ARGS="-x --audio-format mp3 --audio-quality 0"
+          echo "Downloading as MP3"
+        elif [ "$FORMAT" == "mp4" ]; then
+          FORMAT_ARGS="-f best[height<=720]"
+          echo "Downloading as MP4 (720p max)"
+        else
+          FORMAT_ARGS="-f best"
+          echo "Downloading best quality available"
+        fi
+        
+        # Use cookies if available
+        if [ -f "cookies.txt" ]; then
+          COOKIES_ARG="--cookies cookies.txt"
+          echo "Using cookies for authentication"
+        else
+          COOKIES_ARG=""
+          echo "No cookies available"
+        fi
+        
+        # Download command
+        yt-dlp $COOKIES_ARG \
+          --ignore-errors \
+          --no-warnings \
+          --retries 3 \
+          --fragment-retries 3 \
+          $FORMAT_ARGS \
+          -o "%(title).100B.%(ext)s" \
+          "$URL"
+        
+        echo "Download process completed"
+        
+    - name: List downloaded files
+      run: |
+        echo "📁 Current directory:"
+        pwd
+        echo "📁 Contents of youtube_downloads:"
+        ls -la youtube_downloads/ || echo "No youtube_downloads folder"
+        echo "📁 Files in youtube_downloads:"
+        find youtube_downloads -type f -name "*" 2>/dev/null || echo "No files found"
+        
+    - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: download-results
-        path: downloads/
+        name: youtube-downloads
+        path: youtube_downloads/
         retention-days: 1
       if: always()
