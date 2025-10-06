@@ -1,0 +1,78 @@
+name: YouTube Downloader
+
+on:
+  workflow_dispatch:
+    inputs:
+      youtube_url:
+        description: 'YouTube URL to download'
+        required: true
+        type: string
+      format:
+        description: 'Download format'
+        required: false
+        type: choice
+        default: 'mp4'
+        options:
+          - mp4
+          - mp3
+          - best
+  repository_dispatch:
+    types: [youtube-download]
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install yt-dlp
+      run: |
+        python -m pip install --upgrade pip
+        pip install yt-dlp
+        pip install requests
+        
+    - name: Determine download URL
+      id: get_url
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          echo "url=${{ github.event.inputs.youtube_url }}" >> $GITHUB_OUTPUT
+          echo "format=${{ github.event.inputs.format }}" >> $GITHUB_OUTPUT
+        else
+          echo "url=${{ github.event.client_payload.youtube_url }}" >> $GITHUB_OUTPUT
+          echo "format=${{ github.event.client_payload.format || 'mp4' }}" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Download YouTube video
+      run: |
+        mkdir -p downloads
+        
+        if [ "${{ steps.get_url.outputs.format }}" == "mp3" ]; then
+          yt-dlp -x --audio-format mp3 \
+            -o "downloads/%(title)s.%(ext)s" \
+            "${{ steps.get_url.outputs.url }}"
+        elif [ "${{ steps.get_url.outputs.format }}" == "mp4" ]; then
+          yt-dlp -f "best[height<=720]" \
+            -o "downloads/%(title)s.%(ext)s" \
+            "${{ steps.get_url.outputs.url }}"
+        else
+          yt-dlp -f "best" \
+            -o "downloads/%(title)s.%(ext)s" \
+            "${{ steps.get_url.outputs.url }}"
+        fi
+        
+    - name: List downloaded files
+      run: ls -la downloads/
+      
+    - name: Upload downloaded files
+      uses: actions/upload-artifact@v4
+      with:
+        name: youtube-downloads
+        path: downloads/
+        retention-days: 7
