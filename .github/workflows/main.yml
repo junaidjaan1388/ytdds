@@ -1,10 +1,10 @@
-name: Basic YouTube Downloader
+name: YouTube Downloader Alternative
 
 on:
   workflow_dispatch:
     inputs:
       youtube_url:
-        description: 'YouTube URL (public videos work best)'
+        description: 'YouTube URL to download'
         required: true
         type: string
 
@@ -13,33 +13,53 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout
+    - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Setup environment
+    - name: Install alternative tools
       run: |
         sudo apt update
-        sudo apt install -y ffmpeg python3-pip
-        pip3 install --upgrade yt-dlp
+        sudo apt install -y ffmpeg python3-pip wget
+        pip3 install gallery-dl yt-dlp
         
-    - name: Download with minimal options
+    - name: Try multiple download methods
+      continue-on-error: true
       run: |
         mkdir -p downloads
+        URL="${{ github.event.inputs.youtube_url }}"
+        
+        # Method 1: gallery-dl (sometimes works when yt-dlp fails)
+        echo "🔄 Trying gallery-dl..."
+        gallery-dl --verbose -D downloads "$URL" || echo "Gallery-dl failed"
+        
+        # Method 2: yt-dlp with different options
+        echo "🔄 Trying yt-dlp with embedded options..."
         yt-dlp \
           --ignore-errors \
-          --no-warnings \
           --no-check-certificate \
-          --format "worst[height>=240]" \  # Try lower quality first
-          --output "downloads/%(title).100s.%(ext)s" \
-          "${{ github.event.inputs.youtube_url }}" || \
+          --compat-options no-youtube-unavailable-video \
+          -f "best[height<=480]" \
+          -o "downloads/%(title)s.%(ext)s" \
+          "$URL" || echo "yt-dlp method failed"
+          
+        # Method 3: Use specific user agent
+        echo "🔄 Trying with custom user agent..."
         yt-dlp \
           --ignore-errors \
-          --format "best[height<=360]" \
-          --output "downloads/%(title).100s.%(ext)s" \
-          "${{ github.event.inputs.youtube_url }}"
-          
-    - name: Upload result
+          --user-agent "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36" \
+          -f "worst" \  # Sometimes lower quality works better
+          -o "downloads/%(title)s.%(ext)s" \
+          "$URL" || echo "Custom user agent method failed"
+        
+    - name: List results
+      run: |
+        echo "📁 Download results:"
+        find downloads -type f -name "*" 2>/dev/null || echo "No files downloaded"
+        
+    - name: Upload any successful downloads
       uses: actions/upload-artifact@v4
       with:
-        name: download
+        name: download-results
         path: downloads/
+        retention-days: 1
+      if: always()
